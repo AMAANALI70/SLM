@@ -6,9 +6,9 @@
 > locally on highly resource-constrained microcontrollers, with **ESP32** as the
 > primary embedded target.
 
-> **Current Status:** Checkpoint embedded, configuration parsed, tensor layout verified byte-for-byte,
-> and float32 weight values confirmed on physical ESP32 hardware.
-> Transformer operator implementation is the next stage.
+> **Current Status:** Checkpoint embedded · Tensor layout verified · Weights confirmed ·
+> RMSNorm ✅ · MatMul ✅ · Q/K/V Projections ✅ — all exact-match against PC reference.
+> **Next: RoPE positional encoding.**
 
 ---
 
@@ -610,7 +610,7 @@ flowchart TD
 Only after all six levels pass will the runtime be considered a valid embedded
 language-model implementation.
 
-**Level 1 and Level 2 are now complete on physical hardware.**
+**Levels 1, 2, and 3 are now complete on physical hardware. (Binary → Weights → Operators)**
 
 ---
 
@@ -666,8 +666,186 @@ I (944) LLM_TEST: Parser finished.
 | RAM state after full parser execution | ✅ 303,824 bytes free |
 | Largest contiguous block | ✅ 172,032 bytes |
 
-> **These float32 values will be compared against the PC reference checkpoint
-> to confirm byte-exact agreement. That cross-check is the final validation of Level 2.**
+> **These float32 values were cross-validated against the PC reference checkpoint.
+> Byte-exact agreement confirmed. Level 2 complete.**
+
+**Status: ✅ Completed**
+
+---
+
+## 16c. Phase 8 — Transformer Operator #1: RMSNorm (Level 3 — Completed)
+
+With verified float32 weight access established, the first transformer mathematical
+operator was implemented and validated on the ESP32.
+
+**Operation:**
+
+$$\text{output}_i = \frac{x_i}{\text{rms}} \times w_i \qquad \text{where } \text{rms} = \sqrt{\frac{1}{d}\sum x_i^2 + \varepsilon},\ \varepsilon = 10^{-5}$$
+
+Input: **token 0 embedding** (64 float32 values from Flash)
+Weights: **layer-0 attention RMSNorm weights** (offset 131,100)
+
+**PC golden reference** — `rmsnorm_reference.py`:
+
+```text
+RMSNorm PC Reference
+====================
+y[ 0] = -0.826620221138
+y[ 1] =  1.094853281975
+y[ 2] =  0.415095120668
+y[ 3] =  0.856253325939
+y[ 4] = -0.338702976704
+y[ 5] =  1.098049640656
+y[ 6] =  0.045504115522
+y[ 7] =  0.088625475764
+```
+
+**ESP32 hardware output:**
+
+```text
+I (...) LLM_TEST: RMSNORM VERIFICATION
+I (...) LLM_TEST: y[0] = -0.826620221138
+I (...) LLM_TEST: y[1] =  1.094853281975
+I (...) LLM_TEST: y[2] =  0.415095120668
+I (...) LLM_TEST: y[3] =  0.856253325939
+I (...) LLM_TEST: y[4] = -0.338702976704
+I (...) LLM_TEST: y[5] =  1.098049640656
+I (...) LLM_TEST: y[6] =  0.045504115522
+I (...) LLM_TEST: y[7] =  0.088625475764
+```
+
+> **🚨 EXACT MATCH — 12 decimal places 🚨**
+>
+> The ESP32 RMSNorm implementation is numerically identical to the PC reference.
+
+**Milestone:** `TinyStories-260K-ESP32-RMSNorm-v1` ✅
+
+**Status: ✅ Completed**
+
+---
+
+## 16d. Phase 9 — Transformer Operator #2: MatMul (Level 3 — Completed)
+
+A generic matrix-vector multiplication kernel was implemented on the ESP32.
+Weights are read directly from Flash on every access — no RAM copy.
+
+**Operation:**
+
+$$\text{out}[i] = \sum_{j=0}^{\text{in\_dim}-1} W[i][j] \cdot x[j]$$
+
+**ESP32 Implementation** ([esp32_llm_runtime.cpp](file:///d:/HAVELLS-PROJ/SLM/esp32_llm_test/esp32_llm_runtime/main/esp32_llm_runtime.cpp)):
+
+```cpp
+static void matmul(
+    const float *x,
+    const unsigned char *weight_bytes,
+    float *out,
+    int out_dim,
+    int in_dim)
+{
+    for (int i = 0; i < out_dim; i++)
+    {
+        float sum = 0.0f;
+        for (int j = 0; j < in_dim; j++)
+        {
+            float weight = read_f32(
+                weight_bytes + (i * in_dim + j) * sizeof(float)
+            );
+            sum += weight * x[j];
+        }
+        out[i] = sum;
+    }
+}
+```
+
+> **Design philosophy:** Correctness first — optimizations (SIMD, blocking, quantization)
+> will be applied after full autoregressive generation is confirmed working.
+
+**PC golden reference** — `matmul_reference.py`:
+
+```text
+TinyStories 260K WQ MatMul Reference
+=====================================
+q[ 0] = -1.756996393204
+q[ 1] = -0.358998864889
+q[ 2] = -3.703589200974
+q[ 3] =  2.335345745087
+```
+
+**Status: ✅ Completed**
+
+---
+
+## 16e. Phase 10 — Transformer Operator #3: Q / K / V Projections (Level 3 — Completed)
+
+With RMSNorm and MatMul verified, the three attention projections were implemented
+for transformer layer 0.
+
+**Data flow:**
+
+```mermaid
+flowchart TD
+    EMB["token 0 embedding\n(64 floats — from Flash)"] --> RMS["RMSNorm\n(layer-0 rms_att_weight)"]
+    RMS --> NX["normalized x\n(64 floats)"]
+    NX --> WQ["× WQ  [64×64]"]
+    NX --> WK["× WK  [32×64]"]
+    NX --> WV["× WV  [32×64]"]
+    WQ --> Q["Q  — 64 floats"]
+    WK --> K["K  — 32 floats"]
+    WV --> V["V  — 32 floats"]
+```
+
+**Dimensions:**
+
+| Vector | Size | Formula |
+| :--- | ---: | :--- |
+| Q | 64 | `n_heads × head_size = 8 × 8` |
+| K | 32 | `n_kv_heads × head_size = 4 × 8` |
+| V | 32 | `n_kv_heads × head_size = 4 × 8` |
+
+**PC QKV golden reference** — `qkv_reference.c`:
+
+```text
+Q vector:
+q[ 0] = -1.756996393204
+q[ 1] = -0.358998864889
+q[ 2] = -3.703589200974
+q[ 3] =  2.335345745087
+...
+q[15] = -5.553002834320
+
+K vector:
+k[ 0] =  0.658435761929
+k[ 1] =  0.343833506107
+k[ 2] = -0.659079849720
+...
+k[15] =  6.841714382172
+
+V vector:
+v[ 0] = -0.148289874196
+v[ 1] =  0.439105749130
+v[ 2] =  0.598774909973
+...
+v[15] = -0.351092487574
+```
+
+**ESP32 hardware output matched exactly:**
+
+| Vector | Element | PC Reference | ESP32 Output | Match |
+| :--- | :--- | ---: | ---: | :---: |
+| Q | `[0]` | `-1.756996393204` | `-1.756996393204` | ✅ |
+| K | `[0]` | ` 0.658435761929` | ` 0.658435761929` | ✅ |
+| V | `[0]` | `-0.148289874196` | `-0.148289874196` | ✅ |
+
+> **🚨 EXACT MATCH through 12 decimal places — all three projection vectors 🚨**
+
+This is a **major validation milestone**. The three foundational attention projections
+produce bit-identical results on the ESP32 and the PC, using the same checkpoint.
+
+**Reference files:**
+- [`qkv_reference.c`](file:///d:/HAVELLS-PROJ/SLM/esp32_llm_test/reference/qkv_reference.c) — PC golden reference (MSVC)
+- [`matmul_reference.py`](file:///d:/HAVELLS-PROJ/SLM/esp32_llm_test/matmul_reference.py) — Python MatMul reference
+- [`rmsnorm_reference.py`](file:///d:/HAVELLS-PROJ/SLM/esp32_llm_test/rmsnorm_reference.py) — Python RMSNorm reference
 
 **Status: ✅ Completed**
 
@@ -689,9 +867,15 @@ I (944) LLM_TEST: Parser finished.
 | Tensor layout reconstructed | ✅ Completed |
 | Tensor layout verified (1,056,540 B PASS) | ✅ Completed |
 | Weight-value numerical verification (float32 reads from Flash) | ✅ Completed |
-| Transformer operators (RMSNorm, MatMul, etc.) | 🔄 In Progress |
-| Single-token forward pass | ⏳ Pending |
-| Full forward pass | ⏳ Pending |
+| RMSNorm — exact match vs. PC reference | ✅ Completed |
+| MatMul (generic matrix-vector kernel) | ✅ Completed |
+| Q / K / V projections — exact match vs. PC reference | ✅ Completed |
+| RoPE positional encoding | 🔄 In Progress |
+| Causal self-attention (scores + softmax + weighted sum) | ⏳ Pending |
+| Output projection WO + residual add | ⏳ Pending |
+| Feed-forward network (SiLU gate) | ⏳ Pending |
+| Single-token complete forward pass | ⏳ Pending |
+| Full forward pass (all 5 layers) | ⏳ Pending |
 | KV-cache optimization | ⏳ Pending |
 | Tokenizer port to C++ | ⏳ Pending |
 | Autoregressive generation on ESP32 | ⏳ Pending |
@@ -881,11 +1065,14 @@ flowchart TD
     E --> F["✅ Checkpoint Parsed\nOn Physical Device"]
     F --> G["✅ Tensor Layout\nVerified — 1,056,540 B PASS"]
     G --> H["✅ Weight Value Verification\nfloat32 reads from Flash — PASS"]
-    H --> I["🔄 Transformer Operators\nRMSNorm · MatMul · RoPE · SiLU"]
-    I --> J["⏳ Single-Token\nForward Pass"]
-    J --> K["⏳ KV Cache &\nTokenizer"]
-    K --> L["⏳ Autoregressive\nGeneration"]
-    L --> M["🔮 Washing Machine\nSLM"]
+    H --> I["✅ RMSNorm\nExact match — 12 d.p."]
+    I --> J["✅ MatMul\nGeneric kernel verified"]
+    J --> K["✅ Q / K / V Projections\nExact match — 12 d.p."]
+    K --> L["🔄 RoPE\nPositional encoding — next"]
+    L --> M["⏳ Attention\nScores + Softmax"]
+    M --> N["⏳ Full Forward Pass\n(all 5 layers)"]
+    N --> O["⏳ Autoregressive\nGeneration"]
+    O --> P["🔮 Washing Machine\nSLM"]
 
     style A fill:#22c55e,color:#fff
     style B fill:#22c55e,color:#fff
@@ -895,16 +1082,18 @@ flowchart TD
     style F fill:#22c55e,color:#fff
     style G fill:#22c55e,color:#fff
     style H fill:#22c55e,color:#fff
-    style I fill:#eab308,color:#fff
-    style J fill:#6b7280,color:#fff
-    style K fill:#6b7280,color:#fff
-    style L fill:#6b7280,color:#fff
-    style M fill:#3b82f6,color:#fff
+    style I fill:#22c55e,color:#fff
+    style J fill:#22c55e,color:#fff
+    style K fill:#22c55e,color:#fff
+    style L fill:#eab308,color:#fff
+    style M fill:#6b7280,color:#fff
+    style N fill:#6b7280,color:#fff
+    style O fill:#6b7280,color:#fff
+    style P fill:#3b82f6,color:#fff
 ```
 
-**The next milestone is to implement and validate the core transformer
-mathematical operators (RMSNorm, matrix-vector multiplication, RoPE, SiLU,
-Softmax, attention) on the ESP32, comparing each result against the PC reference.**
+**RMSNorm, MatMul, and Q/K/V projections are all verified exact-match against the PC reference.
+The next milestone is RoPE positional encoding.**
 
 ---
 
