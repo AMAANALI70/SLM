@@ -6,9 +6,9 @@
 > locally on highly resource-constrained microcontrollers, with **ESP32** as the
 > primary embedded target.
 
-> **Current Status:** Checkpoint embedded · Tensor layout verified · Weights confirmed ·
-> RMSNorm ✅ · MatMul ✅ · Q/K/V Projections ✅ — all exact-match against PC reference.
-> **Next: RoPE positional encoding.**
+> **🏆 GENERATION ACHIEVED.** TinyStories 260K is running end-to-end on physical ESP32-D0WD-V3.
+> Text prompt → BPE tokenizer → 5-layer transformer → detokenizer → actual generated text.
+> **"Once" → "Once upon a time, there was"** — ~3.8 tok/s · FP32 · No PSRAM.
 
 ---
 
@@ -851,6 +851,190 @@ produce bit-identical results on the ESP32 and the PC, using the same checkpoint
 
 ---
 
+## 16f. Phase 11 — Complete 5-Layer Transformer Forward Pass (Level 4 — Completed)
+
+**Milestone:** `TinyStories-260K-ESP32-Forward-v1` ✅
+
+With individual operators verified, the complete transformer forward pass was
+implemented and executed on physical hardware — all 5 layers, end-to-end:
+
+```mermaid
+flowchart TD
+    T["Input Token ID"] --> EMB["Embedding Lookup\n(Flash read)"]
+    EMB --> L["Layer 0–4 ×5"]
+
+    subgraph L["Transformer Layer (×5)"]
+        RN1["RMSNorm"] --> QKV["Q / K / V Projections"]
+        QKV --> ROPE["RoPE Positional Encoding"]
+        ROPE --> GQA["GQA Self-Attention\n(KV Cache)"]
+        GQA --> WO["WO Projection"]
+        WO --> RES1["Residual Add"]
+        RES1 --> RN2["FFN RMSNorm"]
+        RN2 --> FFN["W1 + W3 → SwiGLU → W2"]
+        FFN --> RES2["Residual Add"]
+    end
+
+    L --> FNORM["Final RMSNorm"]
+    FNORM --> CLS["512-way Classifier\n(shared embedding weights)"]
+    CLS --> ARGMAX["Greedy Argmax"]
+    ARGMAX --> NEXT["Next Token ID"]
+```
+
+### Verified Serial Output — End-to-End Inference
+
+```text
+I (706) LLM_RUN: END-TO-END INFERENCE
+I (716) LLM_RUN: initial token = 1
+I (726) LLM_RUN: forward position 0, token 1
+I (986) LLM_RUN: NEXT TOKEN = 403
+I (986) LLM_RUN: forward position 1, token 403
+I (1246) LLM_RUN: NEXT TOKEN = 407
+I (1256) LLM_RUN: forward position 2, token 407
+I (1516) LLM_RUN: NEXT TOKEN = 261
+I (1516) LLM_RUN: forward position 3, token 261
+I (1776) LLM_RUN: NEXT TOKEN = 378
+I (1776) LLM_RUN: forward position 4, token 378
+I (2036) LLM_RUN: NEXT TOKEN = 432
+I (2046) LLM_RUN: forward position 5, token 432
+I (2306) LLM_RUN: NEXT TOKEN = 383
+I (2306) LLM_RUN: forward position 6, token 383
+I (2566) LLM_RUN: NEXT TOKEN = 286
+I (2566) LLM_RUN: forward position 7, token 286
+I (2836) LLM_RUN: NEXT TOKEN = 261
+I (2836) LLM_RUN: free heap          = 289076
+I (2846) LLM_RUN: largest free block = 155648
+I (2856) LLM_RUN: 🔥 END-TO-END INFERENCE COMPLETE
+```
+
+**Performance:**
+
+| Metric | Value |
+| :--- | ---: |
+| Tokens / step | ~260–270 ms |
+| Throughput | **~3.8 tok/s** |
+| Free heap during inference | 289,076 bytes |
+| Largest free block | 155,648 bytes |
+| Precision | FP32 |
+| KV context | 8 tokens |
+
+**Status: ✅ Completed**
+
+---
+
+## 16g. Phase 12 — Real BPE Tokenizer Embedded on ESP32 (Level 5 — Completed)
+
+The `tok512.bin` tokenizer was converted to a C++ byte array (`tok512_model.cc`)
+and embedded directly into the firmware alongside the checkpoint.
+
+The tokenizer parses the binary format exactly:
+- 4-byte `max_token_length`
+- Per-token: `float score` + `int length` + `char[length]` bytes
+
+Implemented behavior:
+- BOS token prepend
+- Dummy prefix space
+- UTF-8 character processing
+- `<0xXX>` byte fallback encoding
+- BPE merge loop
+- Token decoding with BOS whitespace handling
+
+### Verified Tokenizer Output
+
+```text
+I (721) LLM_RUN: TOKENIZER
+I (721) LLM_RUN: tokenizer bytes      = 6227
+I (731) LLM_RUN: max token length     = 7
+I (731) LLM_RUN: tokenizer parse      : PASS
+I (731) LLM_RUN: tokenizer storage used = 2639 bytes
+I (741) LLM_RUN: vocab[0] = "<unk>"
+I (741) LLM_RUN: vocab[1] = "<s>"
+I (751) LLM_RUN: vocab[2] = "</s>"
+```
+
+**Status: ✅ Completed**
+
+---
+
+## 16h. Phase 13 — End-to-End Text Generation on Physical ESP32 🏆
+
+**Milestone:** `TinyStories-260K-ESP32-Generation-v1` ✅
+
+This is the **primary achievement** of the project to date.
+
+A text prompt was tokenized, run through the complete transformer, and decoded
+back to text — entirely on the physical ESP32-D0WD-V3, with no cloud, no PC
+assistance, and no mocked output.
+
+```mermaid
+flowchart TD
+    A["'Once'\n(text prompt)"] --> B["BPE Tokenizer\n(embedded tok512.bin)"]
+    B --> C["Token IDs\n[1, 403]"]
+    C --> D["TinyStories 260K\n5-layer Transformer\nFP32 inference"]
+    D --> E["Generated Token IDs\n[407, 261, 378, 432, 383, 286]"]
+    E --> F["Detokenizer"]
+    F --> G["'upon a time, there was'"]
+
+    style A fill:#22c55e,color:#fff
+    style B fill:#22c55e,color:#fff
+    style C fill:#22c55e,color:#fff
+    style D fill:#22c55e,color:#fff
+    style E fill:#22c55e,color:#fff
+    style F fill:#22c55e,color:#fff
+    style G fill:#22c55e,color:#fff
+```
+
+### Verified Serial Output — Full Generation
+
+```text
+I (761) LLM_RUN: prompt = "Once"
+I (761) LLM_RUN: prompt token count = 2
+I (761) LLM_RUN: prompt token[0] = 1
+I (771) LLM_RUN: prompt token[1] = 403
+I (771) LLM_RUN: forward prompt position 0, token 1
+I (1031) LLM_RUN: forward prompt position 1, token 403
+
+I (1291) LLM_RUN: GENERATED TEXT
+I (1291) LLM_RUN: Once upon
+I (1291) LLM_RUN: generation position 2 -> token 407    " a"
+I (1561) LLM_RUN: generation position 3 -> token 261    " time"
+I (1821) LLM_RUN: generation position 4 -> token 378    ","
+I (2081) LLM_RUN: generation position 5 -> token 432    " there"
+I (2341) LLM_RUN: generation position 6 -> token 383    " was"
+I (2601) LLM_RUN: generation position 7 -> token 286
+
+I (2861) LLM_RUN: free heap          = 277460
+I (2871) LLM_RUN: largest free block = 147456
+I (2881) LLM_RUN: 🔥 GENERATION-v1 COMPLETE
+```
+
+### Result
+
+> **Input:** `"Once"`
+>
+> **Output:** `"Once upon a time, there was"`
+
+### Current Generation Baseline
+
+| Property | Value |
+| :--- | :--- |
+| Hardware | ESP32-D0WD-V3 |
+| Model | TinyStories 260K |
+| Model size | 1.056 MB |
+| Tokenizer | tok512.bin — 6.227 KB, embedded |
+| Vocabulary | 512 tokens |
+| Precision | FP32 |
+| Context window | 8 tokens |
+| Decoding | Greedy argmax |
+| Output | Real generated text |
+| Speed | **~3.8 tok/s** |
+| Free heap after generation | **~277 KB** |
+| Largest free block | **~147 KB** |
+| New model training | None |
+
+**Status: ✅ Completed**
+
+---
+
 ## 17. Current Project Status
 
 | Component | Status |
@@ -870,15 +1054,16 @@ produce bit-identical results on the ESP32 and the PC, using the same checkpoint
 | RMSNorm — exact match vs. PC reference | ✅ Completed |
 | MatMul (generic matrix-vector kernel) | ✅ Completed |
 | Q / K / V projections — exact match vs. PC reference | ✅ Completed |
-| RoPE positional encoding | 🔄 In Progress |
-| Causal self-attention (scores + softmax + weighted sum) | ⏳ Pending |
-| Output projection WO + residual add | ⏳ Pending |
-| Feed-forward network (SiLU gate) | ⏳ Pending |
-| Single-token complete forward pass | ⏳ Pending |
-| Full forward pass (all 5 layers) | ⏳ Pending |
-| KV-cache optimization | ⏳ Pending |
-| Tokenizer port to C++ | ⏳ Pending |
-| Autoregressive generation on ESP32 | ⏳ Pending |
+| RoPE positional encoding | ✅ Completed |
+| Causal GQA self-attention (scores + softmax + weighted sum) | ✅ Completed |
+| Output projection WO + residual add | ✅ Completed |
+| Feed-forward network (SwiGLU) | ✅ Completed |
+| Single-token complete forward pass | ✅ Completed |
+| Full 5-layer forward pass | ✅ Completed |
+| Tokenizer (BPE) embedded on ESP32 | ✅ Completed |
+| Autoregressive text generation on ESP32 | ✅ **ACHIEVED** |
+| KV-cache extension beyond 8 tokens | 🔄 In Progress |
+| Quantization (INT8 weights) | ⏳ Pending |
 | Task-specific washing-machine SLM | 🔮 Future |
 | Safety / validation layer | 🔮 Future |
 | Hardware integration (GPIO / relays) | 🔮 Future |
@@ -922,10 +1107,13 @@ SLM-PROJECT/
 │       ├── fix_model_linkage.py
 │       └── main/
 │           ├── CMakeLists.txt
-│           ├── esp32_llm_runtime.cpp
+│           ├── esp32_llm_runtime.cpp         ← full generation runtime
+│           ├── esp32_llm_runtime_qkv_v1.cpp  ← archived QKV verification stage
 │           └── model/
 │               ├── stories260K_model.cc   ← embedded byte array (~5.68 MB source)
-│               └── stories260K_model.h
+│               ├── stories260K_model.h
+│               ├── tok512_model.cc        ← embedded tokenizer byte array
+│               └── tok512_model.h
 │
 ├── data_v5_leakage_controlled/
 │   ├── generate_washing_machine_dataset_v5_leakage_controlled.py
@@ -1064,15 +1252,14 @@ flowchart TD
     D --> E["✅ 1.056 MB Checkpoint\nEmbedded in Flash"]
     E --> F["✅ Checkpoint Parsed\nOn Physical Device"]
     F --> G["✅ Tensor Layout\nVerified — 1,056,540 B PASS"]
-    G --> H["✅ Weight Value Verification\nfloat32 reads from Flash — PASS"]
-    H --> I["✅ RMSNorm\nExact match — 12 d.p."]
-    I --> J["✅ MatMul\nGeneric kernel verified"]
-    J --> K["✅ Q / K / V Projections\nExact match — 12 d.p."]
-    K --> L["🔄 RoPE\nPositional encoding — next"]
-    L --> M["⏳ Attention\nScores + Softmax"]
-    M --> N["⏳ Full Forward Pass\n(all 5 layers)"]
-    N --> O["⏳ Autoregressive\nGeneration"]
-    O --> P["🔮 Washing Machine\nSLM"]
+    G --> H["✅ Weights Verified\nfloat32 from Flash"]
+    H --> I["✅ RMSNorm + MatMul\n+ Q/K/V — Exact Match"]
+    I --> J["✅ RoPE + Attention\n+ FFN + SwiGLU"]
+    J --> K["✅ Full 5-Layer\nForward Pass"]
+    K --> L["✅ BPE Tokenizer\nEmbedded"]
+    L --> M["🏆 Text Generation\n'Once upon a time, there was'\n~3.8 tok/s"]
+    M --> N["🔄 Extend Context\n+ INT8 Quantization"]
+    N --> O["🔮 Washing Machine\nSLM"]
 
     style A fill:#22c55e,color:#fff
     style B fill:#22c55e,color:#fff
@@ -1085,15 +1272,17 @@ flowchart TD
     style I fill:#22c55e,color:#fff
     style J fill:#22c55e,color:#fff
     style K fill:#22c55e,color:#fff
-    style L fill:#eab308,color:#fff
-    style M fill:#6b7280,color:#fff
-    style N fill:#6b7280,color:#fff
-    style O fill:#6b7280,color:#fff
-    style P fill:#3b82f6,color:#fff
+    style L fill:#22c55e,color:#fff
+    style M fill:#f59e0b,color:#fff
+    style N fill:#eab308,color:#fff
+    style O fill:#3b82f6,color:#fff
 ```
 
-**RMSNorm, MatMul, and Q/K/V projections are all verified exact-match against the PC reference.
-The next milestone is RoPE positional encoding.**
+**🏆 The primary milestone is achieved: TinyStories 260K is generating real text on physical ESP32 hardware.**
+
+`"Once"` → `"Once upon a time, there was"` at **~3.8 tok/s**, FP32, no PSRAM, no cloud.
+
+Next phase: extend the context window beyond 8 tokens and investigate INT8 weight quantization.
 
 ---
 
