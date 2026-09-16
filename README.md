@@ -1064,7 +1064,7 @@ I (2881) LLM_RUN: 🔥 GENERATION-v1 COMPLETE
 | Autoregressive text generation on ESP32 | ✅ **ACHIEVED** |
 | KV-cache extension beyond 8 tokens | 🔄 In Progress |
 | Quantization (INT8 weights) | ⏳ Pending |
-| Task-specific washing-machine SLM | 🔮 Future |
+| Task-specific  SLM | 🔮 Future |
 | Safety / validation layer | 🔮 Future |
 | Hardware integration (GPIO / relays) | 🔮 Future |
 
