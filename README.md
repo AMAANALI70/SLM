@@ -22,7 +22,7 @@ The long-term objective is to develop a system capable of accepting
 natural-language commands directly on an embedded device and converting them
 into safe, structured machine-control actions — **without requiring cloud-based inference**.
 
-The primary application target is a **smart washing-machine controller**.
+The primary application target is a **smart domain specific controller**.
 
 The intended end-to-end architecture is:
 
@@ -70,7 +70,7 @@ flowchart TD
 
 ## 3. Final Application
 
-The eventual target application is **natural-language control of a washing machine**.
+The eventual target application is **natural-language control of a domain specific machine**.
 
 For example, a user might say:
 
@@ -86,7 +86,7 @@ flowchart TD
     D --> E{Valid?}
     E -- "YES" --> F["⚙️ Deterministic Controller"]
     E -- "NO" --> G["❌ Reject / Error"]
-    F --> H["🫧 Washing Machine"]
+    F --> H["🫧  Machine"]
 ```
 
 A possible structured output representation:
@@ -169,7 +169,7 @@ fundamentally different from deploying a small classification or regression mode
 ## 6. Project Philosophy
 
 The project follows an **experimental progression** rather than attempting to
-deploy the final washing-machine model immediately. Each stage answers a specific
+deploy the final domain specific machine model immediately. Each stage answers a specific
 engineering question before advancing.
 
 ```mermaid
@@ -1203,7 +1203,7 @@ flowchart TD
     VAL --> VALID{Valid?}
     VALID -- "YES" --> CTRL["⚙️ Deterministic Controller"]
     VALID -- "NO"  --> REJ["❌ Reject / Request Clarification"]
-    CTRL --> HW["🫧 Washing Machine Hardware\n(GPIO / Relays)"]
+    CTRL --> HW["🫧  Machine Hardware\n(GPIO / Relays)"]
 ```
 
 > **The SLM provides language understanding.
@@ -1221,7 +1221,7 @@ The next model should be optimized for:
 
 | Requirement | Description |
 | :--- | :--- |
-| **Washing-machine commands** | Domain-specific vocabulary and grammar |
+| **machine commands** | Domain-specific vocabulary and grammar |
 | **Small vocabulary** | Fewer tokens → smaller embedding table |
 | **Structured outputs** | JSON / enum outputs, not free-form text |
 | **Low latency** | Real-time interactive response |
@@ -1259,7 +1259,7 @@ flowchart TD
     K --> L["✅ BPE Tokenizer\nEmbedded"]
     L --> M["🏆 Text Generation\n'Once upon a time, there was'\n~3.8 tok/s"]
     M --> N["🔄 Extend Context\n+ INT8 Quantization"]
-    N --> O["🔮 Washing Machine\nSLM"]
+    N --> O["🔮 Machine\nSLM"]
 
     style A fill:#22c55e,color:#fff
     style B fill:#22c55e,color:#fff
@@ -1338,7 +1338,7 @@ idf.py -p COM6 --flash_size 4MB flash monitor
 The **TinyStories 260K** model is an engineering benchmark for validating
 embedded language-model execution.
 
-It should not be interpreted as the final model for washing-machine control.
+It should not be interpreted as the final model for domain-specific-machine control.
 
 The final application model will require separate evaluation for:
 
